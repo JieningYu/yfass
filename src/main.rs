@@ -1,0 +1,336 @@
+//! FASS platform implementation.
+
+use std::{borrow::Cow, sync::Arc};
+
+use axum::{
+    Router,
+    http::{self, StatusCode},
+    response::IntoResponse,
+};
+use bitflags::bitflags;
+use parking_lot::Mutex;
+use rand::{SeedableRng as _, rngs::StdRng};
+use serde::Serialize;
+use yfass::{
+    func::{self, FunctionManager, OwnedKey},
+    os,
+    sandbox::{self, Sandbox},
+    user::{self, Permission, UserManager},
+};
+
+mod service;
+
+#[derive(Debug)]
+struct LocalCx {
+    funcs: FunctionManager,
+    proxies: scc::HashIndex<OwnedKey, http::uri::Authority>,
+
+    sandbox: os::SandboxImpl,
+    handles: scc::HashMap<OwnedKey, os::SandboxHandleImpl>,
+
+    users: UserManager,
+
+    pub rng: Mutex<StdRng>,
+}
+
+fn main() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+    rt.block_on(main_async())
+}
+
+async fn main_async() {
+    const ROOT_DIR: &str = "./";
+
+    let mut rng = StdRng::from_os_rng();
+    let cx = Arc::new(LocalCx {
+        funcs: FunctionManager::new(ROOT_DIR),
+        users: UserManager::new(&mut rng, ROOT_DIR),
+        proxies: scc::HashIndex::new(),
+        handles: scc::HashMap::new(),
+        sandbox: os::SandboxImpl::default(),
+        rng: Mutex::new(rng),
+    });
+
+    cx.funcs
+        .read_from_fs()
+        .expect("failed to read functions from fs");
+    cx.users
+        .read_from_fs()
+        .expect("failed to read users from fs");
+
+    let router = Router::new()
+        // func services
+        .route(
+            service::func::PATH_UPLOAD,
+            axum::routing::post(service::func::upload),
+        )
+        .route(
+            service::func::PATH_GET,
+            axum::routing::get(service::func::get),
+        )
+        .route(
+            service::func::PATH_OVERRIDE_CONFIG,
+            axum::routing::put(service::func::override_config),
+        )
+        .route(
+            service::func::PATH_ALIAS,
+            axum::routing::patch(service::func::alias),
+        )
+        .route(
+            service::func::PATH_REMOVE,
+            axum::routing::delete(service::func::remove),
+        )
+        .route(
+            service::func::PATH_DEPLOY,
+            axum::routing::post(service::func::deploy),
+        )
+        .route(
+            service::func::PATH_KILL,
+            axum::routing::post(service::func::kill),
+        )
+        .route(
+            service::func::PATH_STATUS,
+            axum::routing::get(service::func::status),
+        )
+        // user services
+        .route(
+            service::user::PATH_ADD,
+            axum::routing::post(service::user::add),
+        )
+        .route(
+            service::user::PATH_GET,
+            axum::routing::get(service::user::get),
+        )
+        .route(
+            service::user::PATH_REMOVE,
+            axum::routing::delete(service::user::remove),
+        )
+        .route(
+            service::user::PATH_REQUEST_TOKEN,
+            axum::routing::post(service::user::request_token),
+        )
+        .route(
+            service::user::PATH_MODIFY,
+            axum::routing::put(service::user::modify),
+        )
+        .with_state::<()>(cx);
+}
+
+impl LocalCx {
+    async fn start_fn(&self, key: func::Key<'_>) -> Result<(), Error> {
+        let func = self.funcs.get(key).ok_or(Error::NotFound)?;
+
+        let config;
+        let auth_uri;
+
+        {
+            let rg = func.read();
+            // need to clone it or non-async read lock will cause deadlock across await points
+            config = rg.config.sandbox.clone();
+            auth_uri = http::uri::Authority::from_maybe_shared(rg.config.addr.to_string())?;
+        }
+
+        let handle = Sandbox::spawn(&self.sandbox, &config, &self.funcs.contents_path(key)).await?;
+
+        if let Err((_, handle)) = self.handles.insert_sync(key.into_owned(), handle) {
+            sandbox::Handle::kill(handle).await;
+            Err(Error::InstanceAlreadyRunning)
+        } else {
+            drop(self.proxies.insert_sync(key.into_owned(), auth_uri));
+            Ok(())
+        }
+    }
+
+    async fn stop_fn(&self, key: func::Key<'_>) -> Result<(), Error> {
+        let (_, handle) = self.handles.remove_sync(&key).ok_or(Error::NotFound)?;
+        sandbox::Handle::kill(handle).await;
+        self.proxies.remove_sync(&key);
+        Ok(())
+    }
+
+    fn is_running(&self, key: func::Key<'_>) -> bool {
+        self.handles
+            .read_sync(&key, |_, handle| sandbox::Handle::is_running(handle))
+            .unwrap_or_default()
+    }
+}
+
+type State = axum::extract::State<Arc<LocalCx>>;
+
+bitflags! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct PermissionFlags: u32 {
+        const READ    = 1 << 0;
+        const WRITE   = 1 << 1;
+        const EXECUTE = 1 << 2;
+        const REMOVE  = 1 << 3;
+        const ADMIN   = 1 << 4;
+        const ROOT    = 1 << 5;
+    }
+}
+
+impl PermissionFlags {
+    fn to_permission(self) -> Option<Permission> {
+        Some(match self {
+            Self::READ => Permission::Read,
+            Self::WRITE => Permission::Write,
+            Self::EXECUTE => Permission::Execute,
+            Self::REMOVE => Permission::Remove,
+            Self::ADMIN => Permission::Admin,
+            Self::ROOT => Permission::Root,
+            _ => return None,
+        })
+    }
+}
+
+const AUTH_PREFIX: &str = "Bearer ";
+
+struct Auth<const P: u32>(String);
+
+impl<const P: u32> axum::extract::FromRequestParts<Arc<LocalCx>> for Auth<P> {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &Arc<LocalCx>,
+    ) -> Result<Self, Self::Rejection> {
+        let flags = PermissionFlags::from_bits_retain(P);
+        let header = parts
+            .headers
+            .remove(http::header::AUTHORIZATION)
+            .ok_or(Error::Unauthorized)?;
+
+        let token = header
+            .to_str()?
+            .strip_prefix(AUTH_PREFIX)
+            .ok_or(Error::InvalidAuthMethod)?
+            .trim();
+
+        if state.users.auth(
+            token,
+            flags
+                .iter()
+                .filter_map(PermissionFlags::to_permission)
+                .map(user::Group::Permission)
+                .map(Cow::Owned),
+        ) {
+            Ok(Self(token.to_owned()))
+        } else {
+            Err(Error::PermissionDenied)
+        }
+    }
+}
+
+struct ContentType(String);
+
+impl<S: Sync> axum::extract::FromRequestParts<S> for ContentType {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        _: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let header = parts
+            .headers
+            .remove(http::header::CONTENT_TYPE)
+            .ok_or(Error::MissingContentType)?;
+        Ok(Self(header.to_str()?.to_owned()))
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
+enum Error {
+    #[error("unauthorized account")]
+    Unauthorized,
+    #[error("permission denied")]
+    PermissionDenied,
+    #[error("invalid header value")]
+    InvalidHeaderEncoding(#[from] http::header::ToStrError),
+    #[error("invalid authentication method, only bearer authentication is supported.")]
+    InvalidAuthMethod,
+    #[error("function manager error")]
+    FunctionManager(#[from] func::ManagerError),
+    #[error("user manager error")]
+    UserManager(#[from] user::ManagerError),
+    #[error("missing content-type header")]
+    MissingContentType,
+    #[error(
+        "unsupported archive type, the only supported archive type is tarball with optional gzip compression"
+    )]
+    UnsupportedArchiveType,
+    #[error("specified resource not found")]
+    NotFound,
+    #[error("I/O error")]
+    Io(#[from] std::io::Error),
+    #[error("invalid key format. the permitted key characters are: a-z, 0-9, -")]
+    InvalidKeyFormat,
+    #[error("another instance of this function is already running")]
+    InstanceAlreadyRunning,
+    #[error("invalid uri parsed from socket address")]
+    InvalidSocketAddrAsUri(#[from] http::uri::InvalidUri),
+    #[error("invalid username format. the permitted key characters are: A-Z, a-z, 0-9, -")]
+    InvalidUsernameFormat,
+    #[error("attempt to modify information of root user")]
+    ModifyRootUser,
+}
+
+impl Error {
+    #[inline]
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Self::Unauthorized | Self::InvalidAuthMethod => StatusCode::UNAUTHORIZED,
+            Self::PermissionDenied
+            | Self::InvalidKeyFormat
+            | Self::InvalidUsernameFormat
+            | Self::ModifyRootUser => StatusCode::FORBIDDEN,
+            Self::InvalidHeaderEncoding(_)
+            | Self::MissingContentType
+            | Self::UnsupportedArchiveType => StatusCode::BAD_REQUEST,
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Io(_) | Self::InvalidSocketAddrAsUri(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::InstanceAlreadyRunning => StatusCode::CONFLICT,
+
+            // function manager
+            Self::FunctionManager(e) => match e {
+                func::ManagerError::NotAliased => StatusCode::FORBIDDEN,
+                func::ManagerError::Io(_)
+                | func::ManagerError::ParseJson(_)
+                | func::ManagerError::Initialized => StatusCode::INTERNAL_SERVER_ERROR,
+                func::ManagerError::Duplicated => StatusCode::CONFLICT,
+                func::ManagerError::NotFound => StatusCode::NOT_FOUND,
+                _ => StatusCode::IM_A_TEAPOT, // non-exhaustive aftermath
+            },
+
+            // user manager
+            Self::UserManager(e) => match e {
+                user::ManagerError::Io(_)
+                | user::ManagerError::ParseJson(_)
+                | user::ManagerError::Initialized => StatusCode::INTERNAL_SERVER_ERROR,
+                user::ManagerError::Duplicated => StatusCode::CONFLICT,
+                user::ManagerError::NotFound => StatusCode::NOT_FOUND,
+                _ => StatusCode::IM_A_TEAPOT, // non-exhaustive aftermath
+            },
+        }
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        #[derive(Serialize)]
+        struct Serialized {
+            error: String,
+        }
+
+        (
+            self.status_code(),
+            axum::Json(Serialized {
+                error: self.to_string(),
+            }),
+        )
+            .into_response()
+    }
+}

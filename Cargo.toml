@@ -1,0 +1,96 @@
+[package]
+name = "yfass"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Backend
+axum = { version = "0.8", features = [
+    "json",
+    # debugging purposes only
+    "macros",
+] }
+base64 = "0.22"
+rand = "0.9"
+time = { version = "0.3", features = ["serde"] }
+bitflags = "2.9"
+tokio-util = { version = "0.7", features = ["io"] }
+async-compression = { version = "0.4", features = [
+    "tokio",
+    "gzip",
+], default-features = false }
+
+# Utilities
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+serde_json = "1.0"
+tracing = "0.1"
+parking_lot = "0.12"
+futures-util = { version = "0.3", default-features = false }
+
+# Async tools
+tokio = { version = "1.47", features = [
+    "sync",
+    "fs",
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "process",
+] }
+scc = "3.0"
+tokio-tar = "0.3"
+
+# Linux-specific
+[target.'cfg(target_os = "linux")'.dependencies]
+libseccomp = { version = "0.4", optional = true }
+libc = "0.2"
+
+[features]
+seccomp = ["dep:libseccomp"]
+
+# Lints from rimecraft workspace
+[workspace.lints.rust]
+missing-docs = "warn"
+missing-debug-implementations = "warn"
+let-underscore-drop = "warn"
+single-use-lifetimes = "warn"
+trivial-numeric-casts = "warn"
+elided-lifetimes-in-paths = "deny"
+unused-lifetimes = "forbid"
+unused-macro-rules = "warn"
+unused-qualifications = "warn"
+variant-size-differences = "warn"
+dyn-drop = "forbid"
+ellipsis-inclusive-range-patterns = "forbid"
+exported-private-dependencies = "forbid"
+uncommon-codepoints = "deny"
+
+[workspace.lints.clippy]
+missing-panics-doc = "warn"
+missing-errors-doc = "warn"
+cloned-instead-of-copied = "warn"
+future-not-send = "warn"
+if-not-else = "warn"
+if-then-some-else-none = "warn"
+impl-trait-in-params = "warn"
+macro-use-imports = "forbid"
+exhaustive-enums = "warn"
+str-to-string = "warn"
+iter-without-into-iter = "warn"
+decimal-literal-representation = "warn"
+ref-as-ptr = "warn"
+unused-trait-names = "warn"
+unnecessary-semicolon = "warn"
+unnecessary-debug-formatting = "warn"
+too-long-first-doc-paragraph = "warn"
+ref-option = "warn"
+redundant-test-prefix = "warn"
+map-with-unused-argument-over-ranges = "warn"
+manual-midpoint = "warn"
+manual-is-power-of-two = "warn"
+ip-constant = "warn"
+elidable-lifetime-names = "warn"
+coerce-container-to-any = "warn"
+
+[lints]
+workspace = true
