@@ -6,7 +6,10 @@ use std::{
     fmt::Display,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{self, AtomicBool},
+    },
 };
 
 use base64::Engine as _;
@@ -236,6 +239,8 @@ pub struct UserManager {
     root_dir: Arc<Path>,
 
     root_token: String,
+
+    dirty: AtomicBool,
 }
 
 const ROOT_USERNAME: &str = "root";
@@ -248,6 +253,16 @@ struct SerializedUsers {
 const USERS_FILE: &str = "users.json";
 
 impl UserManager {
+    fn mark_dirty(&self) {
+        self.dirty.store(true, atomic::Ordering::Relaxed);
+    }
+
+    /// Checks whether the user manager is dirty and needs to be written to the filesystem.
+    #[inline]
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.load(atomic::Ordering::Relaxed)
+    }
+
     /// Creates an empty, uninitialized user manager.
     ///
     /// For loading users from the filesystem, use [`Self::read_from_fs`].
@@ -261,6 +276,7 @@ impl UserManager {
             tokens: scc::HashIndex::new(),
             root_dir: root_dir.into().into_boxed_path().into(),
             root_token: gen_token(rng),
+            dirty: AtomicBool::new(false),
         };
         tracing::info!(
             "token of root account generated for this session: {}",
@@ -328,14 +344,17 @@ impl UserManager {
             true
         });
 
-        std::fs::create_dir_all(&self.root_dir)?;
-        std::fs::write(
+        tokio::fs::create_dir_all(&self.root_dir).await?;
+        tokio::fs::write(
             self.root_dir.join(USERS_FILE),
             serde_json::to_vec(&SerializedUsers {
                 users: users.into_boxed_slice(),
             })?,
         )
-        .map_err(Into::into)
+        .await?;
+
+        self.dirty.store(false, atomic::Ordering::Relaxed);
+        Ok(())
     }
 
     /// Adds a user to the manager.
@@ -350,7 +369,10 @@ impl UserManager {
 
         self.users
             .insert_sync(user.name.clone(), user)
-            .map_err(|_| ManagerError::Duplicated)
+            .map_err(|_| ManagerError::Duplicated)?;
+
+        self.mark_dirty();
+        Ok(())
     }
 
     /// Authenticates a user.
@@ -417,6 +439,7 @@ impl UserManager {
             .ok_or(ManagerError::NotFound)?
             .add_token(rng, duration);
         drop(self.tokens.insert_sync(token.clone(), name.to_owned()));
+        self.mark_dirty();
         Ok(token)
     }
 
@@ -434,7 +457,9 @@ impl UserManager {
         self.users
             .remove_sync(name)
             .map(|_| ())
-            .ok_or(ManagerError::NotFound)
+            .ok_or(ManagerError::NotFound)?;
+        self.mark_dirty();
+        Ok(())
     }
 
     /// Peeks an user or `None` if peeking a root account.
@@ -470,6 +495,7 @@ impl UserManager {
             return Ok(None);
         }
         let mut user = self.users.get_sync(name).ok_or(ManagerError::NotFound)?;
+        self.mark_dirty();
         Ok(Some(f(&mut user)))
     }
 }

@@ -6,7 +6,10 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{self, AtomicBool},
+    },
 };
 
 use parking_lot::RwLock;
@@ -218,6 +221,7 @@ pub struct FunctionManager {
     functions: scc::HashMap<OwnedKey, FunctionCell>,
 
     root_dir: Arc<Path>,
+    dirty: AtomicBool,
 }
 
 const FILE_METADATA: &str = "metadata.json";
@@ -225,6 +229,16 @@ const FILE_CONFIG: &str = "config.json";
 const DIR_CONTENTS: &str = "contents";
 
 impl FunctionManager {
+    fn mark_dirty(&self) {
+        self.dirty.store(true, atomic::Ordering::Relaxed);
+    }
+
+    /// Checks whether the user manager is dirty and needs to be written to the filesystem.
+    #[inline]
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.load(atomic::Ordering::Relaxed)
+    }
+
     /// Creates an empty, uninitialized function manager.
     ///
     /// For loading functions from the filesystem, use [`Self::read_from_fs`].
@@ -235,6 +249,7 @@ impl FunctionManager {
         Self {
             functions: scc::HashMap::new(),
             root_dir: root_dir.into().into_boxed_path().into(),
+            dirty: AtomicBool::new(false),
         }
     }
 
@@ -279,7 +294,10 @@ impl FunctionManager {
         let span = tracing::info_span!("writing information of functions to the filesystem");
         let _e = span.enter();
 
-        self.priv_write_all_to_fs().await
+        self.priv_write_all_to_fs().await?;
+
+        self.dirty.store(false, atomic::Ordering::Relaxed);
+        Ok(())
     }
 
     /// Adds a function to the platform with given minimal information and stream of tarball.
@@ -299,6 +317,7 @@ impl FunctionManager {
     {
         self.priv_init_info(key, init_group)?;
         self.priv_write_contents(key, tarball).await?;
+        self.mark_dirty();
         Ok(())
     }
 
@@ -310,6 +329,7 @@ impl FunctionManager {
     #[inline]
     pub fn modify_alias(&self, key: Key<'_>, alias: Option<String>) -> Result<(), ManagerError> {
         self.priv_modify_alias(key, alias)?;
+        self.mark_dirty();
         Ok(())
     }
 
@@ -321,6 +341,7 @@ impl FunctionManager {
     #[inline]
     pub fn modify_config(&self, key: Key<'_>, config: Config) -> Result<(), ManagerError> {
         self.priv_modify_config(key, config)?;
+        self.mark_dirty();
         Ok(())
     }
 
@@ -332,6 +353,7 @@ impl FunctionManager {
     #[inline]
     pub fn remove_func(&self, key: Key<'_>) -> Result<(), ManagerError> {
         self.priv_remove_func(key)?;
+        self.mark_dirty();
         Ok(())
     }
 

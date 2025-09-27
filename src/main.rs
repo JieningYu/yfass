@@ -151,12 +151,28 @@ async fn main_async() {
             proxy::forward_http_req,
         ))
         // somehow one found <()> looks like F35 engine from outside
-        .with_state::<()>(cx);
+        .with_state::<()>(cx.clone());
 
-    //TODO: worker task to occasionally write functions & users into fs and graceful shutdown configuration
+    tokio::spawn({
+        let cloned_cx = cx.clone();
+        async move {
+            const WRITE_DURATION: tokio::time::Duration = tokio::time::Duration::from_mins(12);
+            let cx = cloned_cx;
+            loop {
+                tokio::time::sleep(WRITE_DURATION).await;
+                save_data(&cx).await;
+            }
+        }
+    });
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, router).await.unwrap();
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let cx = cx.clone();
+            save_data(&cx).await
+        })
+        .await
+        .unwrap();
 }
 
 impl LocalCx {
@@ -410,4 +426,25 @@ struct Args {
     /// Host name to use.
     #[arg(short, long)]
     host: String,
+}
+
+async fn save_data(cx: &LocalCx) {
+    let span = tracing::info_span!("writing data into filesystem");
+    let mut e = None;
+
+    if cx.funcs.is_dirty() {
+        e = Some(e.unwrap_or_else(|| span.enter()));
+        drop(cx.funcs.write_all_to_fs().await.inspect_err(|err| {
+            tracing::error!("failed to write function information into filesystem: {err}")
+        }))
+    }
+
+    if cx.users.is_dirty() {
+        e = Some(e.unwrap_or_else(|| span.enter()));
+        drop(cx.users.write_all_to_fs().await.inspect_err(|err| {
+            tracing::error!("failed to write user information into filesystem: {err}")
+        }))
+    }
+
+    drop(e); // emit unread warnings
 }
