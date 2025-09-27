@@ -1,6 +1,11 @@
 //! FASS platform implementation.
 
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use axum::{
     Router,
@@ -10,6 +15,7 @@ use axum::{
     response::IntoResponse,
 };
 use bitflags::bitflags;
+use clap::Parser as _;
 use hyper_util::client;
 use parking_lot::Mutex;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -49,10 +55,14 @@ fn main() {
 }
 
 async fn main_async() {
-    const ROOT_DIR: &str = "./";
-
-    // PLACEHOLDER
-    let host = "localhost";
+    let args = Args::parse();
+    let addr = SocketAddr::new(
+        args.addr
+            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+        args.port,
+    );
+    let root_dir = args.path.unwrap_or_else(|| PathBuf::from("./"));
+    let host = args.host;
 
     let mut rng = StdRng::from_os_rng();
 
@@ -63,8 +73,8 @@ async fn main_async() {
         .build(client::legacy::connect::HttpConnector::new());
 
     let cx = Arc::new(LocalCx {
-        funcs: FunctionManager::new(ROOT_DIR),
-        users: UserManager::new(&mut rng, ROOT_DIR),
+        funcs: FunctionManager::new(&root_dir),
+        users: UserManager::new(&mut rng, &root_dir),
         proxies: scc::HashIndex::new(),
         handles: scc::HashMap::new(),
         sandbox: os::SandboxImpl::default(),
@@ -142,6 +152,11 @@ async fn main_async() {
         ))
         // somehow one found <()> looks like F35 engine from outside
         .with_state::<()>(cx);
+
+    //TODO: worker task to occasionally write functions & users into fs and graceful shutdown configuration
+
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(listener, router).await.unwrap();
 }
 
 impl LocalCx {
@@ -379,4 +394,20 @@ impl IntoResponse for Error {
         )
             .into_response()
     }
+}
+
+#[derive(Debug, clap::Parser)]
+struct Args {
+    /// Path to the root directory of the server.
+    #[arg(short, long)]
+    path: Option<PathBuf>,
+    /// IP address host (without port number) to bind to.
+    #[arg(short, long)]
+    addr: Option<IpAddr>,
+    /// Port to bind to.
+    #[arg(short, long, default_value_t = 8080)]
+    port: u16,
+    /// Host name to use.
+    #[arg(short, long)]
+    host: String,
 }

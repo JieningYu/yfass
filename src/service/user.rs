@@ -76,7 +76,7 @@ pub const PATH_REMOVE: &str = "/api/user/remove/{user}";
 /// - Authentication is required with permission `ROOT`.
 pub async fn remove(
     cx: State,
-    Auth(_): Auth<ADD_PERMISSION>,
+    Auth(_): Auth<REMOVE_PERMISSION>,
     Path(name): Path<String>,
 ) -> Result<(), Error> {
     cx.users.remove(&name).map_err(Into::into)
