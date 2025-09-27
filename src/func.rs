@@ -351,8 +351,8 @@ impl FunctionManager {
     ///
     /// Returns an error if the function with given key is not found.
     #[inline]
-    pub fn remove_func(&self, key: Key<'_>) -> Result<(), ManagerError> {
-        self.priv_remove_func(key)?;
+    pub async fn remove_func(&self, key: Key<'_>) -> Result<(), ManagerError> {
+        self.priv_remove_func(key).await?;
         self.mark_dirty();
         Ok(())
     }
@@ -507,7 +507,7 @@ impl FunctionManager {
         Ok(())
     }
 
-    fn priv_remove_func(&self, key: Key<'_>) -> Result<(), ManagerError> {
+    async fn priv_remove_func(&self, key: Key<'_>) -> Result<(), ManagerError> {
         let (_, func) = self
             .functions
             .remove_sync(&key)
@@ -515,6 +515,8 @@ impl FunctionManager {
         if let Some(ref alias) = func.read().meta.version_alias {
             self.priv_remove_alias(key, alias)?;
         }
+
+        tokio::fs::remove_dir_all(self.root_dir.join(key.to_string())).await?;
         Ok(())
     }
 

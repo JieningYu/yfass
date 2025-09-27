@@ -172,7 +172,7 @@ pub async fn remove(
         .auth(&token, func.read().config.group.iter().map(Cow::Borrowed))
         .then_some(())
         .ok_or(Error::PermissionDenied)?;
-    cx.funcs.remove_func(key.as_ref())?;
+    cx.funcs.remove_func(key.as_ref()).await?;
     Ok(())
 }
 
