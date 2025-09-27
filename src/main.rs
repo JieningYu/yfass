@@ -43,10 +43,17 @@ struct LocalCx {
     client: client::legacy::Client<client::legacy::connect::HttpConnector, Body>,
     host_with_dot_prefixed: String,
 
-    pub rng: Mutex<StdRng>,
+    rng: Mutex<StdRng>,
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .pretty()
+        .with_level(true)
+        .with_max_level(tracing::Level::INFO)
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .init();
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -146,6 +153,7 @@ async fn main_async() {
             axum::routing::put(service::user::modify),
         )
         // layers being executed from bottom to top in axum's ordering
+        .route_layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(middleware::from_fn_with_state(
             cx.clone(),
             proxy::forward_http_req,
