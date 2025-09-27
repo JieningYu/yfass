@@ -14,6 +14,7 @@ use hyper_util::client;
 use parking_lot::Mutex;
 use rand::{SeedableRng as _, rngs::StdRng};
 use serde::Serialize;
+use tokio_tungstenite::tungstenite;
 use yfass::{
     func::{self, FunctionManager, OwnedKey},
     os,
@@ -308,6 +309,8 @@ enum Error {
     InvalidUriParts(#[from] http::uri::InvalidUriParts),
     #[error("HTTP client error occurred")]
     Client(#[from] client::legacy::Error),
+    #[error("websocket connection error occurred")]
+    WebsocketConnection(#[from] tungstenite::Error),
 }
 
 impl Error {
@@ -330,9 +333,10 @@ impl Error {
 
             Self::NotFound => StatusCode::NOT_FOUND,
 
-            Self::Io(_) | Self::InvalidSocketAddrAsUri(_) | Self::Client(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            Self::Io(_)
+            | Self::InvalidSocketAddrAsUri(_)
+            | Self::Client(_)
+            | Self::WebsocketConnection(_) => StatusCode::INTERNAL_SERVER_ERROR,
 
             Self::InstanceAlreadyRunning => StatusCode::CONFLICT,
 

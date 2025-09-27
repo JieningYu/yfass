@@ -7,9 +7,11 @@ edition = "2024"
 # Backend
 axum = { version = "0.8", features = [
     "json",
+    "ws",
     # debugging purposes only
     "macros",
 ] }
+tokio-tungstenite = "0.28"
 base64 = "0.22"
 rand = "0.9"
 time = { version = "0.3", features = ["serde"] }
