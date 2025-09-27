@@ -103,3 +103,6 @@ coerce-container-to-any = "warn"
 
 [lints]
 workspace = true
+
+[profile.release]
+lto = "fat"
