@@ -4,10 +4,13 @@ use std::{borrow::Cow, sync::Arc};
 
 use axum::{
     Router,
+    body::Body,
     http::{self, StatusCode},
+    middleware,
     response::IntoResponse,
 };
 use bitflags::bitflags;
+use hyper_util::client;
 use parking_lot::Mutex;
 use rand::{SeedableRng as _, rngs::StdRng};
 use serde::Serialize;
@@ -18,17 +21,20 @@ use yfass::{
     user::{self, Permission, UserManager},
 };
 
+mod proxy;
 mod service;
 
 #[derive(Debug)]
 struct LocalCx {
     funcs: FunctionManager,
-    proxies: scc::HashIndex<OwnedKey, http::uri::Authority>,
+    proxies: scc::HashIndex<String, http::uri::Authority>,
+    users: UserManager,
 
     sandbox: os::SandboxImpl,
     handles: scc::HashMap<OwnedKey, os::SandboxHandleImpl>,
 
-    users: UserManager,
+    client: client::legacy::Client<client::legacy::connect::HttpConnector, Body>,
+    host_with_dot_prefixed: String,
 
     pub rng: Mutex<StdRng>,
 }
@@ -44,7 +50,17 @@ fn main() {
 async fn main_async() {
     const ROOT_DIR: &str = "./";
 
+    // PLACEHOLDER
+    let host = "localhost";
+
     let mut rng = StdRng::from_os_rng();
+
+    let client = client::legacy::Builder::new(hyper_util::rt::TokioExecutor::new())
+        .http1_ignore_invalid_headers_in_responses(true)
+        .http1_preserve_header_case(true)
+        .set_host(false)
+        .build(client::legacy::connect::HttpConnector::new());
+
     let cx = Arc::new(LocalCx {
         funcs: FunctionManager::new(ROOT_DIR),
         users: UserManager::new(&mut rng, ROOT_DIR),
@@ -52,6 +68,8 @@ async fn main_async() {
         handles: scc::HashMap::new(),
         sandbox: os::SandboxImpl::default(),
         rng: Mutex::new(rng),
+        client,
+        host_with_dot_prefixed: format!(".{}", host),
     });
 
     cx.funcs
@@ -116,6 +134,12 @@ async fn main_async() {
             service::user::PATH_MODIFY,
             axum::routing::put(service::user::modify),
         )
+        // layers being executed from bottom to top in axum's ordering
+        .layer(middleware::from_fn_with_state(
+            cx.clone(),
+            proxy::forward_http_req,
+        ))
+        // somehow one found <()> looks like F35 engine from outside
         .with_state::<()>(cx);
 }
 
@@ -139,7 +163,7 @@ impl LocalCx {
             sandbox::Handle::kill(handle).await;
             Err(Error::InstanceAlreadyRunning)
         } else {
-            drop(self.proxies.insert_sync(key.into_owned(), auth_uri));
+            drop(self.proxies.insert_sync(key.to_host_prefix(), auth_uri));
             Ok(())
         }
     }
@@ -147,7 +171,7 @@ impl LocalCx {
     async fn stop_fn(&self, key: func::Key<'_>) -> Result<(), Error> {
         let (_, handle) = self.handles.remove_sync(&key).ok_or(Error::NotFound)?;
         sandbox::Handle::kill(handle).await;
-        self.proxies.remove_sync(&key);
+        self.proxies.remove_sync(&key.to_host_prefix());
         Ok(())
     }
 
@@ -276,6 +300,14 @@ enum Error {
     InvalidUsernameFormat,
     #[error("attempt to modify information of root user")]
     ModifyRootUser,
+    #[error("the function you are trying to access is not running or it does not exist")]
+    FunctionNotRunning,
+    #[error("missing HOST header or it is invalid")]
+    MissingHost,
+    #[error("invalid uri parts from host")]
+    InvalidUriParts(#[from] http::uri::InvalidUriParts),
+    #[error("HTTP client error occurred")]
+    Client(#[from] client::legacy::Error),
 }
 
 impl Error {
@@ -283,15 +315,25 @@ impl Error {
     fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized | Self::InvalidAuthMethod => StatusCode::UNAUTHORIZED,
+
             Self::PermissionDenied
             | Self::InvalidKeyFormat
             | Self::InvalidUsernameFormat
-            | Self::ModifyRootUser => StatusCode::FORBIDDEN,
+            | Self::ModifyRootUser
+            | Self::FunctionNotRunning => StatusCode::FORBIDDEN,
+
             Self::InvalidHeaderEncoding(_)
             | Self::MissingContentType
-            | Self::UnsupportedArchiveType => StatusCode::BAD_REQUEST,
+            | Self::UnsupportedArchiveType
+            | Self::MissingHost
+            | Self::InvalidUriParts(_) => StatusCode::BAD_REQUEST,
+
             Self::NotFound => StatusCode::NOT_FOUND,
-            Self::Io(_) | Self::InvalidSocketAddrAsUri(_) => StatusCode::INTERNAL_SERVER_ERROR,
+
+            Self::Io(_) | Self::InvalidSocketAddrAsUri(_) | Self::Client(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+
             Self::InstanceAlreadyRunning => StatusCode::CONFLICT,
 
             // function manager

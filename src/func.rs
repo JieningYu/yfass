@@ -181,6 +181,12 @@ impl Key<'_> {
             version: self.version.to_owned(),
         }
     }
+
+    /// Converts this borrowed key into a prefix for host names.
+    #[inline]
+    pub fn to_host_prefix(&self) -> String {
+        format!("{}.{}", self.version, self.name)
+    }
 }
 
 impl Display for Key<'_> {

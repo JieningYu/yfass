@@ -19,6 +19,7 @@ async-compression = { version = "0.4", features = [
     "tokio",
     "gzip",
 ], default-features = false }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy"] }
 
 # Utilities
 serde = { version = "1.0", features = ["derive"] }
