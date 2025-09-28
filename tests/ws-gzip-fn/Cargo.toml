@@ -1,0 +1,16 @@
+[package]
+name = "test-ws-gzip-fn"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[profile.release]
+lto = "thin"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1.47", features = ["rt"] }
+flate2 = "1.1"
+futures-util = { version = "0.3", default-features = false }

@@ -1,0 +1,14 @@
+[package]
+name = "test-ws-gzip-client"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[profile.release]
+lto = "thin"
+
+[dependencies]
+tungstenite = "0.28"
+flate2 = "1.1"

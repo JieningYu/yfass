@@ -1,3 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["./", "tests/*"]
+
 [package]
 name = "yfass"
 version = "0.1.0"
@@ -5,12 +9,7 @@ edition = "2024"
 
 [dependencies]
 # Backend
-axum = { version = "0.8", features = [
-    "json",
-    "ws",
-    # debugging purposes only
-    "macros",
-] }
+axum = { version = "0.8", features = ["json", "ws"] }
 tokio-tungstenite = "0.28"
 base64 = "0.22"
 rand = "0.9"
@@ -39,7 +38,6 @@ tracing = "0.1"
 parking_lot = "0.12"
 futures-util = { version = "0.3", default-features = false }
 
-# Async tools
 tokio = { version = "1.47", features = [
     "sync",
     "fs",
@@ -47,7 +45,9 @@ tokio = { version = "1.47", features = [
     "rt-multi-thread",
     "process",
     "time",
-] }
+    "macros",
+    "signal",
+] } # Async tools
 scc = "3.0"
 tokio-tar = "0.3"
 
@@ -107,4 +107,4 @@ coerce-container-to-any = "warn"
 workspace = true
 
 [profile.release]
-lto = "fat"
+lto = "thin"

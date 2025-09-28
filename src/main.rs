@@ -176,11 +176,33 @@ async fn main_async() {
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
-            let cx = cx.clone();
+            let ctrl_c = async {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("failed to install Ctrl+C handler");
+            };
+
+            #[cfg(unix)]
+            let terminate = async {
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler")
+                    .recv()
+                    .await;
+            };
+
+            #[cfg(not(unix))]
+            let terminate = std::future::pending::<()>();
+
+            tokio::select! {
+                _ = ctrl_c => {},
+                _ = terminate => {},
+            }
+
             save_data(&cx).await
         })
         .await
         .unwrap();
+    tracing::info!("server stopped");
 }
 
 impl LocalCx {
@@ -312,13 +334,13 @@ enum Error {
     Unauthorized,
     #[error("permission denied")]
     PermissionDenied,
-    #[error("invalid header value")]
+    #[error("invalid header value: {0}")]
     InvalidHeaderEncoding(#[from] http::header::ToStrError),
     #[error("invalid authentication method, only bearer authentication is supported.")]
     InvalidAuthMethod,
-    #[error("function manager error")]
+    #[error("function manager error: {0}")]
     FunctionManager(#[from] func::ManagerError),
-    #[error("user manager error")]
+    #[error("user manager error: {0}")]
     UserManager(#[from] user::ManagerError),
     #[error("missing content-type header")]
     MissingContentType,
@@ -328,13 +350,13 @@ enum Error {
     UnsupportedArchiveType,
     #[error("specified resource not found")]
     NotFound,
-    #[error("I/O error")]
+    #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("invalid key format. the permitted key characters are: a-z, 0-9, -")]
     InvalidKeyFormat,
     #[error("another instance of this function is already running")]
     InstanceAlreadyRunning,
-    #[error("invalid uri parsed from socket address")]
+    #[error("invalid uri parsed from socket address: {0}")]
     InvalidSocketAddrAsUri(#[from] http::uri::InvalidUri),
     #[error("invalid username format. the permitted key characters are: A-Z, a-z, 0-9, -")]
     InvalidUsernameFormat,
@@ -344,11 +366,11 @@ enum Error {
     FunctionNotRunning,
     #[error("missing HOST header or it is invalid")]
     MissingHost,
-    #[error("invalid uri parts from host")]
+    #[error("invalid uri parts from host: {0}")]
     InvalidUriParts(#[from] http::uri::InvalidUriParts),
-    #[error("HTTP client error occurred")]
+    #[error("HTTP client error occurred: {0}")]
     Client(#[from] client::legacy::Error),
-    #[error("websocket connection error occurred")]
+    #[error("websocket connection error occurred: {0}")]
     WebsocketConnection(#[from] tungstenite::Error),
 }
 

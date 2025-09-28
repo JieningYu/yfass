@@ -32,7 +32,7 @@ fn client_from_ref(user: &User) -> ClientUser {
 }
 
 const ADD_PERMISSION: u32 = PermissionFlags::ADMIN.bits();
-pub const PATH_ADD: &str = "/api/user/add";
+pub(crate) const PATH_ADD: &str = "/api/user/add";
 
 /// Adds a user.
 ///
@@ -67,7 +67,7 @@ pub async fn add(
 }
 
 const REMOVE_PERMISSION: u32 = PermissionFlags::ROOT.bits();
-pub const PATH_REMOVE: &str = "/api/user/remove/{user}";
+pub(crate) const PATH_REMOVE: &str = "/api/user/remove/{user}";
 
 /// Removes a user.
 ///
@@ -83,7 +83,7 @@ pub async fn remove(
 }
 
 const GET_PERMISSION: u32 = PermissionFlags::empty().bits();
-pub const PATH_GET: &str = "/api/user/get/{user}";
+pub(crate) const PATH_GET: &str = "/api/user/get/{user}";
 
 /// Gets information of a user.
 ///
@@ -156,7 +156,7 @@ pub struct RequestTokenRequest {
 }
 
 const REQUEST_TOKEN_PERMISSION: u32 = PermissionFlags::ADMIN.bits();
-pub const PATH_REQUEST_TOKEN: &str = "/api/user/request-token";
+pub(crate) const PATH_REQUEST_TOKEN: &str = "/api/user/request-token";
 
 /// Requests a new token for the specified user.
 ///
@@ -183,7 +183,7 @@ pub async fn request_token(
 }
 
 const MODIFY_PERMISSION: u32 = PermissionFlags::ADMIN.bits();
-pub const PATH_MODIFY: &str = "/api/user/modify";
+pub(crate) const PATH_MODIFY: &str = "/api/user/modify";
 
 /// Modifies information (currently only group is supported) of a user.
 ///

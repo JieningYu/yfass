@@ -18,7 +18,7 @@ fn validate_key_param(name: &str) -> Result<(), Error> {
 }
 
 const PERMISSION_UPLOAD: u32 = PermissionFlags::WRITE.bits();
-pub const PATH_UPLOAD: &str = "/api/upload/{key}";
+pub(crate) const PATH_UPLOAD: &str = "/api/upload/{key}";
 
 /// Deploys a function by uploading a tarball.
 ///
@@ -72,7 +72,7 @@ pub async fn upload(
 }
 
 const PERMISSION_GET: u32 = PermissionFlags::READ.bits();
-pub const PATH_GET: &str = "/api/get/{key}";
+pub(crate) const PATH_GET: &str = "/api/get/{key}";
 
 /// Retrives a function information.
 ///
@@ -96,7 +96,7 @@ pub async fn get(
 }
 
 const PERMISSION_OVERRIDE_CONFIG: u32 = PermissionFlags::WRITE.bits();
-pub const PATH_OVERRIDE_CONFIG: &str = "/api/override/{key}";
+pub(crate) const PATH_OVERRIDE_CONFIG: &str = "/api/override/{key}";
 
 /// Overrides configuration of a function.
 ///
@@ -127,7 +127,7 @@ pub struct AliasRequest {
 }
 
 const PERMISSION_ALIAS: u32 = PermissionFlags::WRITE.bits();
-pub const PATH_ALIAS: &str = "/api/alias/{key}";
+pub(crate) const PATH_ALIAS: &str = "/api/alias/{key}";
 
 /// Overrides alias of a function.
 ///
@@ -155,7 +155,7 @@ pub async fn alias(
 }
 
 const PERMISSION_REMOVE: u32 = PermissionFlags::REMOVE.bits();
-pub const PATH_REMOVE: &str = "/api/remove/{key}";
+pub(crate) const PATH_REMOVE: &str = "/api/remove/{key}";
 
 /// Removes a function.
 ///
@@ -177,7 +177,7 @@ pub async fn remove(
 }
 
 const PERMISSION_DEPLOY: u32 = PermissionFlags::EXECUTE.bits();
-pub const PATH_DEPLOY: &str = "/api/deploy/{key}";
+pub(crate) const PATH_DEPLOY: &str = "/api/deploy/{key}";
 
 /// Deploys (or start) a function.
 ///
@@ -198,7 +198,7 @@ pub async fn deploy(
 }
 
 const PERMISSION_KILL: u32 = PermissionFlags::EXECUTE.bits();
-pub const PATH_KILL: &str = "/api/kill/{key}";
+pub(crate) const PATH_KILL: &str = "/api/kill/{key}";
 
 /// Kills (or stop) a function.
 ///
@@ -224,7 +224,7 @@ pub struct StatusResponse {
 }
 
 const PERMISSION_STATUS: u32 = PermissionFlags::READ.bits();
-pub const PATH_STATUS: &str = "/api/status/{key}";
+pub(crate) const PATH_STATUS: &str = "/api/status/{key}";
 
 pub async fn status(
     cx: State,
