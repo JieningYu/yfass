@@ -620,9 +620,9 @@ impl FunctionManager {
 pub enum ManagerError {
     #[error("the given function is not aliased")]
     NotAliased,
-    #[error("I/O error occurred")]
+    #[error("I/O error occurred: {0}")]
     Io(#[from] std::io::Error),
-    #[error("JSON parsing error")]
+    #[error("JSON parsing error: {0}")]
     ParseJson(#[from] serde_json::Error),
     #[error("the function manager is already initialized")]
     Initialized,

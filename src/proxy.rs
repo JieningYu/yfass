@@ -21,7 +21,11 @@ pub async fn forward_http_req(
         .ok_or(Error::MissingHost)?
         .to_str()
         .ok()
-        .and_then(|s| s.strip_suffix(&cx.host_with_dot_prefixed))
+        // .inspect(|host| tracing::debug!("proxy: received request to hostname {host}"))
+        .and_then(|s| {
+            s.strip_suffix(&cx.host_with_dot_prefixed)
+                .or_else(|| s.strip_suffix(&cx.host_port_with_dot_prefixed))
+        })
     else {
         // cant strip with dot prefixed host. not a subdomain tho
         return Ok(next.run(request).await);
@@ -34,7 +38,13 @@ pub async fn forward_http_req(
 
     let mut uri_parts = std::mem::take(request.uri_mut()).into_parts();
     uri_parts.authority = Some(authority);
+    uri_parts.scheme = Some("ws".try_into().unwrap());
     *request.uri_mut() = Uri::from_parts(uri_parts)?;
+
+    tracing::debug!(
+        "proxy: forwarding request to function with uri {}",
+        request.uri()
+    );
 
     // forward websocket requests
     if maybe_ws_request(&request) {
@@ -51,6 +61,8 @@ pub async fn forward_http_req(
         if let Ok(upgrade) =
             axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await
         {
+            tracing::debug!("proxy: forwarding websocket upgrade request");
+
             // elide the request body as it should be empty
             let request = Request::from_parts(request.into_parts().0, ());
             let (stream, _resp) = tokio_tungstenite::connect_async(request).await?;
@@ -63,7 +75,7 @@ pub async fn forward_http_req(
                     c2s_stream
                         .map_ok(msg_ts_from_axum)
                         .forward(s2f_sink.sink_map_err(axum::Error::new))
-                        .inspect_err(|err| tracing::error!("websocket error from connection chain client -> server -> function: {err}")),
+                        .inspect_err(|err| tracing::warn!("websocket error from connection chain client -> server -> function: {err}")),
                 );
 
                 // function -> server -> client
@@ -72,7 +84,7 @@ pub async fn forward_http_req(
                         .try_filter_map(|o| std::future::ready(Ok(msg_axum_from_ts(o))))
                         .map_err(axum::Error::new)
                         .forward(s2c_sink)
-                        .inspect_err(|err| tracing::error!("websocket error from connection chain function -> server -> client: {err}"))
+                        .inspect_err(|err| tracing::warn!("websocket error from connection chain function -> server -> client: {err}"))
                 );
             });
 

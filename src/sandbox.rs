@@ -8,7 +8,6 @@
 
 use std::{
     collections::HashMap,
-    ffi::OsString,
     path::{Path, PathBuf},
 };
 
@@ -43,7 +42,7 @@ pub struct SandboxConfig {
     /// The key is the name of the variable, and the value is the value of the variable,
     /// or `None` to remove the (inherited) variable.
     #[serde(default)]
-    pub envs: HashMap<OsString, Option<OsString>>,
+    pub envs: HashMap<String, Option<String>>,
 
     /// Whether to inherit stdout from the host system.
     #[serde(default)]

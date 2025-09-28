@@ -8,7 +8,7 @@ use std::{
 };
 
 use axum::{
-    Router,
+    Router, ServiceExt as _,
     body::Body,
     http::{self, StatusCode},
     middleware,
@@ -21,6 +21,8 @@ use parking_lot::Mutex;
 use rand::{SeedableRng as _, rngs::StdRng};
 use serde::Serialize;
 use tokio_tungstenite::tungstenite;
+use tower_layer::Layer as _;
+use tracing_subscriber::EnvFilter;
 use yfass::{
     func::{self, FunctionManager, OwnedKey},
     os,
@@ -42,6 +44,7 @@ struct LocalCx {
 
     client: client::legacy::Client<client::legacy::connect::HttpConnector, Body>,
     host_with_dot_prefixed: String,
+    host_port_with_dot_prefixed: String,
 
     rng: Mutex<StdRng>,
 }
@@ -50,8 +53,11 @@ fn main() {
     tracing_subscriber::fmt()
         .pretty()
         .with_level(true)
-        .with_max_level(tracing::Level::INFO)
-        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
         .init();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -88,6 +94,7 @@ async fn main_async() {
         rng: Mutex::new(rng),
         client,
         host_with_dot_prefixed: format!(".{}", host),
+        host_port_with_dot_prefixed: format!(".{}:{}", host, args.port),
     });
 
     cx.funcs
@@ -154,10 +161,6 @@ async fn main_async() {
         )
         // layers being executed from bottom to top in axum's ordering
         .route_layer(tower_http::trace::TraceLayer::new_for_http())
-        .layer(middleware::from_fn_with_state(
-            cx.clone(),
-            proxy::forward_http_req,
-        ))
         // somehow one found <()> looks like F35 engine from outside
         .with_state::<()>(cx.clone());
 
@@ -174,34 +177,39 @@ async fn main_async() {
     });
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            let ctrl_c = async {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("failed to install Ctrl+C handler");
-            };
+    axum::serve(
+        listener,
+        middleware::from_fn_with_state(cx.clone(), proxy::forward_http_req)
+            .layer(router)
+            .into_make_service(),
+    )
+    .with_graceful_shutdown(async move {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
 
-            #[cfg(unix)]
-            let terminate = async {
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("failed to install SIGTERM handler")
-                    .recv()
-                    .await;
-            };
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install SIGTERM handler")
+                .recv()
+                .await;
+        };
 
-            #[cfg(not(unix))]
-            let terminate = std::future::pending::<()>();
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
 
-            tokio::select! {
-                _ = ctrl_c => {},
-                _ = terminate => {},
-            }
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
 
-            save_data(&cx).await
-        })
-        .await
-        .unwrap();
+        save_data(&cx).await
+    })
+    .await
+    .unwrap();
     tracing::info!("server stopped");
 }
 

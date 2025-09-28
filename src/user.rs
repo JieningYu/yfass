@@ -175,6 +175,7 @@ impl FromStr for Group {
             .map(Self::Permission)
             .map_err(|err| ParseGroupError::InvalidPermission(value.to_owned(), err)),
             UG_KEY_CUSTOM => Ok(Self::Custom(value.to_owned())),
+            UG_KEY_SINGULAR => Ok(Self::Singular(value.to_owned())),
             _ => Err(ParseGroupError::MissingKey),
         }
     }
@@ -445,6 +446,9 @@ impl UserManager {
 
     /// Returns the name of the user holding the given token.
     pub fn user_name(&self, token: &str) -> Option<String> {
+        if token == self.root_token {
+            return Some("root".to_owned());
+        }
         self.tokens.peek_with(token, |_, name| name.clone())
     }
 
@@ -505,9 +509,9 @@ impl UserManager {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum ManagerError {
-    #[error("I/O error occurred")]
+    #[error("I/O error occurred: {0}")]
     Io(#[from] std::io::Error),
-    #[error("JSON parsing error")]
+    #[error("JSON parsing error: {0}")]
     ParseJson(#[from] serde_json::Error),
     #[error("the user manager is already initialized")]
     Initialized,

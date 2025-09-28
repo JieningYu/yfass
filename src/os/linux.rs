@@ -1,6 +1,10 @@
 //! Linux-specific implementation.
 
-use std::{borrow::Cow, ffi::OsStr, path::Path};
+use std::{
+    borrow::Cow,
+    ffi::{OsStr, OsString},
+    path::Path,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -96,12 +100,22 @@ impl crate::sandbox::Sandbox for Bubblewrap {
             }
         };
 
-        tokio::process::Command::new(COMMAND_BUBBLEWRAP)
+        let mut command = tokio::process::Command::new(COMMAND_BUBBLEWRAP);
+        command
             .current_dir(contents_path)
             .args(args.iter().map(|cow| &**cow))
             .stdout(stdio())
-            .stderr(stdio())
-            .spawn()
+            .stderr(stdio());
+        tracing::info!(
+            "spawning bubblewrap with args: {:?}",
+            OsString::from_iter(
+                command
+                    .as_std()
+                    .get_args()
+                    .flat_map(|arg| [arg, " ".as_ref()])
+            )
+        );
+        command.spawn()
     }
 }
 
@@ -138,6 +152,8 @@ fn bwrap_args<'a>(
     contents_path: &'a Path,
     #[cfg(all(feature = "seccomp", target_os = "linux"))] bpf_fd: Option<std::os::fd::OwnedFd>,
 ) -> Vec<Cow<'a, OsStr>> {
+    let _ = contents_path;
+
     // const ARG_CHDIR: &str = "--chdir";
     const ARG_UNSHARE_ALL: &str = "--unshare-all";
     const ARG_SHARE_NET: &str = "--share-net";
@@ -150,10 +166,12 @@ fn bwrap_args<'a>(
     const ARG_PROC: &str = "--proc";
     const ARG_DEV: &str = "--dev";
     const ARG_TMPFS: &str = "--tmpfs";
+    const ARG_CHDIR: &str = "--chdir";
 
     const MOUNT_POINT_PROCFS: &str = "/proc";
     const MOUNT_POINT_DEVTMPFS: &str = "/dev";
     const MOUNT_POINT_TMPFS: &str = "/tmp";
+    const MOUNT_POINT_CONTENTS: &str = "/.__private_yfass_contents";
 
     let mut args = vec![
         // change directory to the contents path
@@ -168,7 +186,10 @@ fn bwrap_args<'a>(
         Cow::Borrowed(ARG_NEW_SESSION.as_ref()),
         // bind contents path as read-only
         Cow::Borrowed(ARG_RO_BIND.as_ref()), // this should not fail
-        Cow::Borrowed(contents_path.as_os_str()),
+        Cow::Borrowed("./".as_ref()),
+        Cow::Borrowed(MOUNT_POINT_CONTENTS.as_ref()),
+        Cow::Borrowed(ARG_CHDIR.as_ref()),
+        Cow::Borrowed(MOUNT_POINT_CONTENTS.as_ref()),
         // die with parent process
         Cow::Borrowed(ARG_DIE_WITH_PARENT.as_ref()),
     ];
@@ -209,11 +230,14 @@ fn bwrap_args<'a>(
         if let Some(v) = v {
             args.extend_from_slice(&[
                 Cow::Borrowed(ARG_SET_ENV.as_ref()),
-                Cow::Borrowed(k),
-                Cow::Borrowed(v),
+                Cow::Borrowed(k.as_ref()),
+                Cow::Borrowed(v.as_ref()),
             ]);
         } else {
-            args.extend_from_slice(&[Cow::Borrowed(ARG_UNSET_ENV.as_ref()), Cow::Borrowed(k)]);
+            args.extend_from_slice(&[
+                Cow::Borrowed(ARG_UNSET_ENV.as_ref()),
+                Cow::Borrowed(k.as_ref()),
+            ]);
         }
     }
 

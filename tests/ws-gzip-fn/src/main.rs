@@ -12,6 +12,7 @@ use flate2::read::GzEncoder;
 use futures_util::{StreamExt as _, TryStreamExt as _};
 
 fn main() {
+    println!("starting websocket gzip test server");
     let port = std::env::var("YFASS_PORT")
         .expect("missing YFASS_PORT env var")
         .parse::<u16>()
