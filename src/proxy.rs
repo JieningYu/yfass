@@ -41,11 +41,6 @@ pub async fn forward_http_req(
     uri_parts.scheme = Some(Scheme::HTTP);
     *request.uri_mut() = Uri::from_parts(uri_parts)?;
 
-    tracing::debug!(
-        "proxy: forwarding request to function with uri {}",
-        request.uri()
-    );
-
     // forward websocket requests
     if maybe_ws_request(&request) {
         let mut parts;
@@ -58,17 +53,19 @@ pub async fn forward_http_req(
             Request::from_parts(p, body)
         };
 
-        let mut uri_parts = std::mem::take(request.uri_mut()).into_parts();
-        uri_parts.scheme = Some("ws".try_into().unwrap());
-        *request.uri_mut() = Uri::from_parts(uri_parts)?;
-
         if let Ok(upgrade) =
             axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await
         {
-            tracing::debug!("proxy: forwarding websocket upgrade request");
+            let mut uri_parts = std::mem::take(request.uri_mut()).into_parts();
+            uri_parts.scheme = Some("ws".try_into().unwrap());
+            *request.uri_mut() = Uri::from_parts(uri_parts)?;
 
             // elide the request body as it should be empty
             let request = Request::from_parts(request.into_parts().0, ());
+            tracing::debug!(
+                "proxy: forwarding websocket upgrade request with uri {}",
+                request.uri()
+            );
             let (stream, _resp) = tokio_tungstenite::connect_async(request).await?;
             let resp = upgrade.on_upgrade(|ws| async {
                 let (s2c_sink, c2s_stream) = ws.split();
@@ -96,6 +93,11 @@ pub async fn forward_http_req(
         }
         // else: this is not a websocket request
     }
+
+    tracing::debug!(
+        "proxy: forwarding request to function with uri {}",
+        request.uri()
+    );
 
     cx.client
         .request(request)
