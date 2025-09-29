@@ -39,6 +39,7 @@ tracing = "0.1"
 parking_lot = "0.12"
 futures-util = { version = "0.3", default-features = false }
 
+# Async tools
 tokio = { version = "1.47", features = [
     "sync",
     "fs",
@@ -48,17 +49,18 @@ tokio = { version = "1.47", features = [
     "time",
     "macros",
     "signal",
-] } # Async tools
+] }
 scc = "3.0"
 tokio-tar = "0.3"
 
 # Linux-specific
 [target.'cfg(target_os = "linux")'.dependencies]
 libseccomp = { version = "0.4", optional = true }
+command-fds = { version = "0.3", optional = true, features = ["tokio"] }
 libc = "0.2"
 
 [features]
-seccomp = ["dep:libseccomp"]
+seccomp = ["dep:libseccomp", "dep:command-fds"]
 
 # Lints from rimecraft workspace
 [workspace.lints.rust]

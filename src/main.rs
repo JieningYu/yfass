@@ -60,6 +60,12 @@ fn main() {
         )
         .init();
 
+    if cfg!(all(not(feature = "seccomp"), target_os = "linux")) {
+        tracing::warn!(
+            "the binary is not compiled with `seccomp` feature, which is required for syscall filtering on GNU/Linux platform"
+        );
+    }
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

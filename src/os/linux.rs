@@ -1,8 +1,11 @@
 //! Linux-specific implementation.
 
+#[cfg(feature = "seccomp")]
+use std::os::raw::c_int;
 use std::{
     borrow::Cow,
     ffi::{OsStr, OsString},
+    os::fd::OwnedFd,
     path::Path,
 };
 
@@ -63,6 +66,11 @@ impl Default for SandboxConfigExt {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Bubblewrap;
 
+#[cfg(feature = "seccomp")]
+const BWRAP_SECCOMP_FD: c_int = 3;
+#[cfg(feature = "seccomp")]
+const BWRAP_SECCOMP_FD_STR: &str = "3";
+
 impl crate::sandbox::Sandbox for Bubblewrap {
     type Handle = tokio::process::Child;
 
@@ -73,25 +81,32 @@ impl crate::sandbox::Sandbox for Bubblewrap {
     ) -> std::io::Result<Self::Handle> {
         const COMMAND_BUBBLEWRAP: &str = "bwrap";
 
-        let args = bwrap_args(
-            config,
-            contents_path,
-            #[cfg(all(feature = "seccomp", target_os = "linux"))]
+        let scp_fd: Option<OwnedFd>;
+        #[cfg(feature = "seccomp")]
+        {
+            scp_fd = if config.platform_ext.syscall_filter_mode == SyscallFilterMode::Deny
+                && config.platform_ext.syscall_filter.is_empty()
             {
-                || -> std::io::Result<std::os::fd::OwnedFd> {
+                None
+            } else {
+                || -> std::io::Result<OwnedFd> {
                     use std::os::fd::{AsFd as _, OwnedFd};
 
                     let (r, w) = std::io::pipe()?;
                     compile_seccomp_filter(config, w.as_fd()).map_err(std::io::Error::other)?;
-                    drop(w);
+                    tracing::debug!("os: compiled seccomp filter");
                     Ok(OwnedFd::from(r))
                 }()
                 .inspect_err(|e| {
-                    tracing::error!("failed to create pipe and compile seccomp filter: {e}")
+                    tracing::error!("os: failed to create pipe and compile seccomp filter: {e}")
                 })
                 .ok()
-            },
-        );
+            };
+        }
+        #[cfg(not(all(feature = "seccomp", target_os = "linux")))]
+        let scp_fd = None;
+
+        let args = bwrap_args(config, contents_path, scp_fd.is_some());
         let stdio = || {
             if config.inherit_stdout {
                 std::process::Stdio::inherit()
@@ -106,8 +121,20 @@ impl crate::sandbox::Sandbox for Bubblewrap {
             .args(args.iter().map(|cow| &**cow))
             .stdout(stdio())
             .stderr(stdio());
+
+        #[cfg(feature = "seccomp")]
+        if let Some(parent_fd) = scp_fd {
+            use command_fds::{CommandFdExt as _, FdMapping};
+            let _ = command
+                .fd_mappings(vec![FdMapping {
+                    parent_fd,
+                    child_fd: BWRAP_SECCOMP_FD,
+                }])
+                .inspect_err(|err| tracing::error!("os: failed to set command fd: {err}"));
+        }
+
         tracing::info!(
-            "spawning bubblewrap with args: {:?}",
+            "os: spawning bubblewrap with args: \n{:?}",
             OsString::from_iter(
                 command
                     .as_std()
@@ -119,7 +146,7 @@ impl crate::sandbox::Sandbox for Bubblewrap {
     }
 }
 
-#[cfg(all(feature = "seccomp", target_os = "linux"))]
+#[cfg(feature = "seccomp")]
 fn compile_seccomp_filter(
     config: &SandboxConfig,
     fd_w: std::os::fd::BorrowedFd<'_>,
@@ -150,7 +177,7 @@ fn compile_seccomp_filter(
 fn bwrap_args<'a>(
     config: &'a SandboxConfig,
     contents_path: &'a Path,
-    #[cfg(all(feature = "seccomp", target_os = "linux"))] bpf_fd: Option<std::os::fd::OwnedFd>,
+    seccomp: bool,
 ) -> Vec<Cow<'a, OsStr>> {
     let _ = contents_path;
 
@@ -242,15 +269,12 @@ fn bwrap_args<'a>(
     }
 
     // syscall filtering through seccomp
-    #[cfg(all(feature = "seccomp", target_os = "linux"))]
-    if let Some(bpf_fd) = bpf_fd {
+    #[cfg(feature = "seccomp")]
+    if seccomp {
         const ARG_SECCOMP: &str = "--seccomp";
-
-        use std::os::fd::IntoRawFd as _;
-        let raw_fd = bpf_fd.into_raw_fd();
         args.extend_from_slice(&[
             Cow::Borrowed(ARG_SECCOMP.as_ref()),
-            Cow::Owned(format!("{raw_fd}").into()),
+            Cow::Borrowed(BWRAP_SECCOMP_FD_STR.as_ref()),
         ]);
     }
 
