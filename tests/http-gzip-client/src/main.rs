@@ -1,26 +1,24 @@
-//! Test client for `test-ws-gzip-fn`.
+//! Test client for `test-http-gzip-fn`.
 
 use std::io::Read as _;
 
 use flate2::bufread::GzDecoder;
-use tungstenite::Message;
 
 const MATERIAL: &[u8] = include_bytes!("../../material.webp");
 
 fn main() {
     let host = std::env::var("YFASS_HOST").expect("missing YFASS_HOST env var");
 
-    let (mut ws, _) = tungstenite::connect(format!("ws://{}/", host)).expect("connect failed");
-    assert!(ws.can_write(), "cannot write");
-    ws.write(Message::Binary(MATERIAL.into()))
-        .expect("write material failed");
-    ws.flush().unwrap();
-    let Message::Binary(compressed) = ws.read().expect("cannot read") else {
-        panic!("invalid message type")
-    };
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(format!("http://{host}/"))
+        .body(MATERIAL)
+        .send()
+        .expect("request failed");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK, "bad status code");
+
+    let compressed = resp.bytes().expect("cannot read response body");
     assert_ne!(compressed.len(), 0, "empty data");
-    ws.close(None).expect("cannot close connection");
-    ws.flush().unwrap();
 
     let mut decompressed = Vec::new();
     let mut gz = GzDecoder::new(&compressed[..]);

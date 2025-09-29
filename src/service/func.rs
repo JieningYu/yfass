@@ -55,15 +55,17 @@ pub async fn upload(
         }
         // .tar.gz / .tgz file
         CONTENT_TYPE_GZIP | CONTENT_TYPE_GZIP_NON_STANDARD => {
-            cx.funcs
-                .add_func(
-                    key.as_ref(),
-                    group,
-                    &mut tokio_tar::Archive::new(
-                        async_compression::tokio::bufread::GzipDecoder::new(reader),
-                    ),
-                )
-                .await?
+            // cx.funcs
+            //     .add_func(
+            //         key.as_ref(),
+            //         group,
+            //         &mut tokio_tar::Archive::new(
+            //             async_compression::tokio::bufread::GzipDecoder::new(reader),
+            //         ),
+            //     )
+            //     .await?
+
+            return Err(Error::Unstable("upload-tar-gz"));
         }
         _ => return Err(Error::UnsupportedArchiveType),
     }

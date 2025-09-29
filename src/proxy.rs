@@ -1,7 +1,7 @@
 use axum::{
     body::{Body, Bytes},
     extract::{FromRequestParts as _, Request},
-    http::{self, Uri},
+    http::{self, Uri, uri::Scheme},
     response::Response,
 };
 use futures_util::{SinkExt as _, StreamExt as _, TryFutureExt as _, TryStreamExt as _};
@@ -38,7 +38,7 @@ pub async fn forward_http_req(
 
     let mut uri_parts = std::mem::take(request.uri_mut()).into_parts();
     uri_parts.authority = Some(authority);
-    uri_parts.scheme = Some("ws".try_into().unwrap());
+    uri_parts.scheme = Some(Scheme::HTTP);
     *request.uri_mut() = Uri::from_parts(uri_parts)?;
 
     tracing::debug!(
@@ -57,6 +57,10 @@ pub async fn forward_http_req(
             parts = p.clone();
             Request::from_parts(p, body)
         };
+
+        let mut uri_parts = std::mem::take(request.uri_mut()).into_parts();
+        uri_parts.scheme = Some("ws".try_into().unwrap());
+        *request.uri_mut() = Uri::from_parts(uri_parts)?;
 
         if let Ok(upgrade) =
             axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await
@@ -107,6 +111,17 @@ fn maybe_ws_request(request: &Request) -> bool {
     } else {
         request.method() == http::Method::CONNECT
     }
+}
+
+fn utf8_bytes_axum_from_ts(msg: tungstenite::Utf8Bytes) -> axum::extract::ws::Utf8Bytes {
+    //SAFETY: ts' type already guarantees utf8 validity. we have to cancel the check for performance
+    // cant find a better way to do this. tol
+    unsafe { String::from_utf8_unchecked(Bytes::from(msg).into()).into() }
+}
+
+fn utf8_bytes_ts_from_axum(msg: axum::extract::ws::Utf8Bytes) -> tungstenite::Utf8Bytes {
+    //SAFETY: axum's type already guarantees utf8 validity.
+    unsafe { tungstenite::Utf8Bytes::from_bytes_unchecked(msg.into()) }
 }
 
 // helper functions from axum
@@ -174,15 +189,4 @@ fn msg_ts_from_axum(message: axum::extract::ws::Message) -> tungstenite::Message
         }
         axum::extract::ws::Message::Close(None) => ts::Message::Close(None),
     }
-}
-
-fn utf8_bytes_axum_from_ts(msg: tungstenite::Utf8Bytes) -> axum::extract::ws::Utf8Bytes {
-    //SAFETY: ts' type already guarantees utf8 validity. we have to cancel the check for performance
-    // cant find a better way to do this. tol
-    unsafe { String::from_utf8_unchecked(Bytes::from(msg).into()).into() }
-}
-
-fn utf8_bytes_ts_from_axum(msg: axum::extract::ws::Utf8Bytes) -> tungstenite::Utf8Bytes {
-    //SAFETY: axum's type already guarantees utf8 validity.
-    unsafe { tungstenite::Utf8Bytes::from_bytes_unchecked(msg.into()) }
 }

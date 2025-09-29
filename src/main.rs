@@ -380,6 +380,8 @@ enum Error {
     Client(#[from] client::legacy::Error),
     #[error("websocket connection error occurred: {0}")]
     WebsocketConnection(#[from] tungstenite::Error),
+    #[error("feature {0} is unstable")]
+    Unstable(&'static str),
 }
 
 impl Error {
@@ -392,7 +394,8 @@ impl Error {
             | Self::InvalidKeyFormat
             | Self::InvalidUsernameFormat
             | Self::ModifyRootUser
-            | Self::FunctionNotRunning => StatusCode::FORBIDDEN,
+            | Self::FunctionNotRunning
+            | Self::Unstable(_) => StatusCode::FORBIDDEN,
 
             Self::InvalidHeaderEncoding(_)
             | Self::MissingContentType

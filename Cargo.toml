@@ -108,4 +108,4 @@ coerce-container-to-any = "warn"
 workspace = true
 
 [profile.release]
-lto = "thin"
+lto = "fat"
