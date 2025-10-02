@@ -201,6 +201,12 @@ The function's main directory is lied by the directory structure uploaded to the
 
 Read-only entries above are open to be configured per-function through configuration files.
 
+#### User Groups
+
+User groups are tags attached to a arbitrary user for identifying permissions and custom categorization.
+
+A user group could be either `permission:<permission name>` or `custom:<name>`. A set of special group exists for identity of users like `singular:yjn024` for the only user that is myself.
+
 ### Issues during Development
 
 #### IPC through Unix Pipe FD
@@ -210,3 +216,42 @@ Read-only entries above are open to be configured per-function through configura
 After learning the existence of per-process FD tables I got started to work on passing ownership of read FD to bubblewrap. I asked a LLM but while it gave me a solution to call unsafe function `pre_exec` of `CommandExt` trait to do bare syscalls for cloning the FD into subprocess. This is way too verbose and I'm not that confident to do unsafe stuff across processes.
 
 And that I looked into GitHub and found a crate `command-fds` made by Google which can do all the things up packed into a function. Well a perfect solution which actually works.
+
+#### Wrongly-used Axum newtype in trait implementation
+
+In Axum we use `axum::extract::State` for stateful injection but it should only be used as a service extractor. However I used that newtype wrapper in a trait implementation of `FromRequestParts<S>` for extractor type `Auth<const P>` where `S` is the state type. So it's a wrong usage thus makes the compiler to complain that functions receiving `Auth` are not valid service handlers.
+
+Rust compiler is not smart enough to figure out that `Auth` is not a service extractor matching single-newtype wrapper. Instead it is a doubly-newtype stateful extractor. I checked through the codebase and Axum docs and finally after burden of hours found out the real issue. Have to laugh myself.
+
+#### Crappy bubblewrap arguments
+
+At first I mounted `./` from the host filesystem (read-only) to `./` in the sandbox. I used to assume that `./` in the sandbox is identical to `./` in the host. But it's not, instead, it means `/` thus I can't continue to bind any other directory to `/` like `/lib`.
+
+I realized this by endless tries of invoking `ls` and `pwd` in command line using bubblewrap. So after that I switched to bind into `/.__private_yfass_contents` in sandbox. And then everthing works.
+
+### Pros and Cons
+
+#### Pros
+
+- Low resource usage: What truly matters compared with bare-execution are the platform backend itself written in Rust which uses nothing and bubblewrap which is a rootless tiny wrapper.
+- Full access to host-installed libraries and runtimes if permitted.
+- Each function can be configured with a JSON file.
+- Management of the platform could be done through HTTP APIs at all scale.
+
+#### Cons
+
+- Minimum tests which lack corner cases.
+- No documented APIs.
+- Only supports GNU/Linux.
+- Hard to use without a client. (I used Firefox devtools to shoot requests)
+- Forwards network traffic which impacts performance. (However necessary for now as all subdomains of the main host are routed to the platform)
+- No auto-restart and auto-launch of functions. (But easy to implement though through watchdog)
+- Functions need to care about what libraries are installed on the host or they have to carry their own.
+
+### Journey
+
+At the time I received the mail from Team BYR, which was in midnight, I built the architecture of the platform in mind on the bed. That night I was stimulated by the idea of the platform.
+
+So the days followed I started coding at free time. While overall I enjoyed the process, except writing APIs and tests. But well there's no significant changes in my emotions.
+
+But the pain starts when I learned that I have to write this report. I'm not a native English speaker and not capable to write a Chinese report as well due to poor expression capabilities. But as English is not my mother language I could express in a way more boundlessly. However, still, I'm hard to write a report. So sorry for this.
