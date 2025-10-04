@@ -93,9 +93,264 @@ The latter one should be configured at runtime of platform through its API (will
 
 ## API
 
-docs: TBD...
+### Authentication
 
-Check the source code for now. They have some inline docs for you to check.
+Authentication is done through HTTP headers `Authorization` with format `Bearer <token>`.
+
+Token of root user could be obtained by the booting logs of the platform executable. Each run of the platform executable will generate a new token.
+
+### User API Endpoints
+
+#### Add User
+
+Creates a new user in the system.
+
+**Endpoint:** `POST /api/user/add`
+
+**Permissions Required:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "name": "yjn024",
+  "groups": ["permission:admin", "permission:write"]
+}
+```
+
+**Request Fields:**
+
+- `name` (string, required): The username for the new user. Must contain only ASCII alphanumeric characters and hyphens.
+- `groups` (array of strings, optional): Groups to assign to the user.
+
+#### Get User
+
+Retrieves information about a specific user.
+
+**Endpoint:** `GET /api/user/get/{user}`
+
+**Permissions Required:**
+
+- No special permissions when retrieving your own information;
+- ADMIN permission when retrieving information about other users.
+
+**Path Parameters:**
+
+- `user` (string, required): The username of the user to retrieve.
+
+**Response Body:**
+
+```json
+{
+  "name": "yjn024",
+  "groups": ["permission:admin", "permission:write"]
+}
+```
+
+### Remove User
+
+Removes a user from the system.
+
+**Endpoint:** `DELETE /api/user/remove/{user}`
+
+**Permissions Required:** ROOT
+
+**Path Parameters:**
+
+- `user` (string, required): The username of the user to remove.
+
+### Request Token
+
+Generates a new authentication token for a user.
+
+**Endpoint:** `POST /api/user/request-token`
+
+**Permissions Required:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "duration": 10,
+  "user": "string"
+}
+```
+
+**Request Fields:**
+
+- `duration` (integer, optional, default: 10): Token validity duration in days
+- `user` (string, required): Username for which to generate a token
+
+**Response Body:** Plain text token string:
+
+```text
+NZqztQXEd34pYjSPoP6cTH1FBa2ZNf9_Ng2bDMnaEtE
+```
+
+### Modify User
+
+Modifies user information, particularly group assignments.
+
+**Endpoint:** `PUT /api/user/modify`
+
+**Permissions Required:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "name": "string",
+  "groups": ["permission:admin", "permission:write"]
+}
+```
+
+**Request Fields:**
+
+- `name` (string, required): The username of the user to modify.
+- `groups` (array of strings, optional): New set of groups to override to the user.
+
+### Upload Function
+
+Deploys a new function by uploading a tarball.
+
+**Endpoint:** `POST /api/upload/{key}`
+
+**Permissions Required:** WRITE
+
+**Path Parameters:**
+
+- `key` (string, required): Function identifier in format `name@version`
+
+**Request Body:**
+
+Binary tarball data with appropriate `Content-Type` header:
+
+- `application/x-tar` for tar files
+- `application/gzip` or `application/x-gzip` for gzipped tar files _(the feature is unstable so is not useable now)_
+
+### Get Function Information
+
+Retrieves information about a specific function.
+
+**Endpoint:** `GET /api/get/{key}`
+
+**Permissions Required:** READ
+
+**Path Parameters:**
+
+- `key` (string, required): Function identifier in format `name@version` or alias
+
+**Response:**
+
+- `200 OK` with JSON body containing function information:
+  ```jsonc
+  {
+    "meta": {
+      "name": "string",
+      "version": "string",
+      "version_alias": "string (optional)"
+    },
+    "config": {
+      // ..
+      // see configuration format above
+    }
+  }
+  ```
+
+### Override Function Configuration
+
+Updates the configuration of an existing function.
+
+**Endpoint:** `PUT /api/override/{key}`
+
+**Permissions Required:** WRITE and membership in the function's group (if specified)
+
+**Path Parameters:**
+
+- `key` (string, required): Function identifier in format `name@version` or alias
+
+**Request Body:** See configuration format above
+
+### Set Function Alias
+
+Sets or removes an alias for a function.
+
+**Endpoint:** `PUT /api/alias/{key}`
+
+**Permissions Required:** WRITE and membership in the function's group (if specified)
+
+**Path Parameters:**
+
+- `key` (string, required): Function identifier in format `name@version`
+
+**Request Body:**
+
+```json
+{
+  "alias": "string (optional)"
+}
+```
+
+Where alias is either:
+
+- A string value to set or update the alias
+- `null` to remove the alias
+
+### Remove Function
+
+Removes a function from the platform.
+
+**Endpoint:** `DELETE /api/remove/{key}`
+
+**Permissions Required:** REMOVE and membership in the function's group (if specified)
+
+**Path Parameters:**
+
+- `key` (string, required): Function identifier in format `name@version` or alias
+
+### Deploy Function
+
+Starts execution of a function.
+
+**Endpoint:** `POST /api/deploy/{key}`
+
+**Permissions Required:** EXECUTE and membership in the function's group (if specified)
+
+**Path Parameters:**
+
+- `key` (string, required): Function identifier in format `name@version` or alias
+
+### Kill Function
+
+Stops execution of a function.
+
+**Endpoint:** `POST /api/kill/{key}`
+
+**Permissions Required:** EXECUTE and membership in the function's group (if specified)
+
+**Path Parameters:**
+
+- `key` (string, required): Function identifier in format `name@version` or alias
+
+### Get Function Status
+
+Checks if a function is currently running.
+
+**Endpoint:** `GET /api/status/{key}`
+
+**Permissions Required:** EXECUTE and membership in the function's group (if specified)
+
+**Path Parameters:**
+
+- `key` (string, required): Function identifier in format `name@version` or alias
+
+**Response:**
+
+```json
+{
+  "running": true
+}
+```
 
 ## Access to functions
 
@@ -241,7 +496,6 @@ I realized this by endless tries of invoking `ls` and `pwd` in command line usin
 #### Cons
 
 - Minimum tests which lack corner cases.
-- No documented APIs.
 - Only supports GNU/Linux.
 - Hard to use without a client. (I used Firefox devtools to shoot requests)
 - Forwards network traffic which impacts performance. (However necessary for now as all subdomains of the main host are routed to the platform)
